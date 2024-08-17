@@ -2,10 +2,23 @@
 ;; Define the platform token. This example uses a basic fungible token implementation.
 (define-fungible-token platform-token 1000000) ;; Total supply of 1,000,000 tokens
 
+;; Define the admin role and allow admin transfer
+(define-data-var admin principal tx-sender)
+
+;; Function to change the admin
+(define-public (change-admin (new-admin principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get admin)) (err u1010)) ;; Error code for "Unauthorized admin change"
+        (var-set admin new-admin)
+        (print (concat "Admin changed to " (principal-to-string new-admin)))
+        (ok "Admin changed successfully")
+    )
+)
+
 ;; Mint new tokens to a user. Typically, this would be restricted to certain roles.
 (define-public (mint-tokens (recipient principal) (amount uint))
     (begin
-        ;; Ensure only an authorized user can mint tokens (in this case, we'll assume tx-sender is authorized)
+        ;; Ensure only an authorized user can mint tokens (admin)
         (asserts! (is-eq tx-sender (var-get admin)) (err u1000)) ;; Error code for "Unauthorized action"
         (try! (ft-mint? platform-token amount recipient))
         (print (concat "Minted " (uint-to-string amount) " tokens to " (principal-to-string recipient)))
@@ -189,6 +202,102 @@
     (is-some (map-get? subscriptions {subscriber: user, content-id: content-id}))
 )
 
+;; ========== Governance Contract ========== ;;
+;; This section handles platform governance, allowing token holders to propose changes and vote on them.
+
+;; Data structure to store proposals
+(define-data-var proposals (map uint 
+                                 {proposer: principal, 
+                                  description: (string-ascii 256), 
+                                  votes-for: uint, 
+                                  votes-against: uint, 
+                                  executed: bool}))
+
+;; A counter to keep track of proposal IDs
+(define-data-var proposal-counter uint 0)
+
+;; Quorum requirement for proposal execution (e.g., at least 100 votes)
+(define-constant quorum-requirement uint 100)
+
+;; Create a new proposal
+(define-public (create-proposal (description (string-ascii 256)))
+    (begin
+        ;; Increment the proposal counter to generate a new proposal ID
+        (var-set proposal-counter (+ (var-get proposal-counter) u1))
+        (let ((new-proposal-id (var-get proposal-counter)))
+            (map-insert proposals new-proposal-id 
+                        {proposer: tx-sender, 
+                         description: description, 
+                         votes-for: u0, 
+                         votes-against: u0, 
+                         executed: false})
+            (print (concat "Proposal created with ID " (uint-to-string new-proposal-id) " by " (principal-to-string tx-sender)))
+            (ok new-proposal-id)
+        )
+    )
+)
+
+;; Vote on a proposal
+(define-public (vote (proposal-id uint) (support bool) (vote-weight uint))
+    (begin
+        ;; Ensure the proposal exists
+        (match (map-get? proposals proposal-id)
+            proposal
+            (begin
+                ;; Ensure the voter has enough tokens
+                (asserts! (>= (ft-get-balance platform-token tx-sender) vote-weight) (err u1001)) ;; Error code for "Insufficient balance"
+                ;; Update the vote count
+                (if support
+                    (map-set proposals proposal-id 
+                             {proposer: (tuple-get proposer proposal), 
+                              description: (tuple-get description proposal), 
+                              votes-for: (+ (tuple-get votes-for proposal) vote-weight), 
+                              votes-against: (tuple-get votes-against proposal), 
+                              executed: (tuple-get executed proposal)})
+                    (map-set proposals proposal-id 
+                             {proposer: (tuple-get proposer proposal), 
+                              description: (tuple-get description proposal), 
+                              votes-for: (tuple-get votes-for proposal), 
+                              votes-against: (+ (tuple-get votes-against proposal) vote-weight), 
+                              executed: (tuple-get executed proposal)})
+                )
+                (print (concat "Vote recorded on proposal ID " (uint-to-string proposal-id) " by " (principal-to-string tx-sender) " with " (uint-to-string vote-weight) " tokens"))
+                (ok "Vote recorded")
+            )
+            (err u1008) ;; Error code for "Proposal not found"
+        )
+    )
+)
+
+;; Execute a proposal if it passes
+(define-public (execute-proposal (proposal-id uint))
+    (begin
+        ;; Ensure the proposal exists and hasn't been executed
+        (match (map-get? proposals proposal-id)
+            proposal
+            (if (and (not (tuple-get executed proposal)) 
+                     (> (tuple-get votes-for proposal) (tuple-get votes-against proposal))
+                     (>= (+ (tuple-get votes-for proposal) (tuple-get votes-against proposal)) quorum-requirement))
+                (begin
+                    ;; Mark the proposal as executed
+                    (map-set proposals proposal-id 
+                             {proposer: (tuple-get proposer proposal), 
+                              description: (tuple-get description proposal), 
+                              votes-for: (tuple-get votes-for proposal), 
+                              votes-against: (tuple-get votes-against proposal), 
+                              executed: true})
+                    ;; Execute the proposal's logic here (this is a placeholder)
+                    ;; Example: upgrading the platform, changing rules, etc.
+                    (print (concat "Executed proposal ID " (uint-to-string proposal-id)))
+                    (ok "Proposal executed successfully")
+                )
+                (err u1009) ;; Error code for "Proposal cannot be executed"
+            )
+            (err u1008) ;; Error code for "Proposal not found"
+        )
+    )
+)
+
 ;; ========== Helper Functions ========== ;;
 ;; Helper function to check if content exists
 (define-private (content-exists? (content-id uint))
@@ -207,4 +316,14 @@
             (err u1003) ;; Error code for "Content not found"
         )
     )
+)
+
+;; Retrieve proposal details
+(define-read-only (get-proposal (proposal-id uint))
+    (map-get? proposals proposal-id)
+)
+
+;; Get the current proposal counter
+(define-read-only (get-proposal-counter)
+    (var-get proposal-counter)
 )
