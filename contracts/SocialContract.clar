@@ -5,6 +5,8 @@
 ;; Mint new tokens to a user. Typically, this would be restricted to certain roles.
 (define-public (mint-tokens (recipient principal) (amount uint))
     (begin
+        ;; Ensure only an authorized user can mint tokens (in this case, we'll assume tx-sender is authorized)
+        (asserts! (is-eq tx-sender (var-get admin)) (err u1000)) ;; Error code for "Unauthorized action"
         (try! (ft-mint? platform-token amount recipient))
         (print (concat "Minted " (uint-to-string amount) " tokens to " (principal-to-string recipient)))
         (ok amount)
@@ -14,6 +16,8 @@
 ;; Allow a user to transfer tokens to another user.
 (define-public (transfer-tokens (recipient principal) (amount uint))
     (begin
+        ;; Ensure sender has enough balance (this is automatically handled by ft-transfer? but good to check)
+        (asserts! (>= (ft-get-balance platform-token tx-sender) amount) (err u1001)) ;; Error code for "Insufficient balance"
         (try! (ft-transfer? platform-token amount tx-sender recipient))
         (print (concat "Transferred " (uint-to-string amount) " tokens to " (principal-to-string recipient)))
         (ok amount)
@@ -31,15 +35,12 @@
                                (bio (optional (string-ascii 160))) 
                                (profile-pic-url (optional (string-ascii 256))))
     (begin
-        (if (map-get? user-profiles tx-sender)
-            (err "Profile already exists. Use update-profile instead.")
-            (begin
-                (map-insert user-profiles tx-sender 
-                            {username: username, bio: bio, profile-pic-url: profile-pic-url})
-                (print "Profile created successfully")
-                (ok "Profile created successfully")
-            )
-        )
+        ;; Ensure the user doesn't already have a profile
+        (asserts! (not (map-get? user-profiles tx-sender)) (err u1002)) ;; Error code for "Profile already exists"
+        (map-insert user-profiles tx-sender 
+                    {username: username, bio: bio, profile-pic-url: profile-pic-url})
+        (print "Profile created successfully")
+        (ok "Profile created successfully")
     )
 )
 
@@ -48,16 +49,12 @@
                                (bio (optional (string-ascii 160))) 
                                (profile-pic-url (optional (string-ascii 256))))
     (begin
-        (match (map-get? user-profiles tx-sender)
-            profile
-            (begin
-                (map-set user-profiles tx-sender 
-                         {username: username, bio: bio, profile-pic-url: profile-pic-url})
-                (print "Profile updated successfully")
-                (ok "Profile updated successfully")
-            )
-            (err "Profile does not exist. Create a profile first.")
-        )
+        ;; Ensure the profile exists
+        (asserts! (map-get? user-profiles tx-sender) (err u1003)) ;; Error code for "Profile not found"
+        (map-set user-profiles tx-sender 
+                 {username: username, bio: bio, profile-pic-url: profile-pic-url})
+        (print "Profile updated successfully")
+        (ok "Profile updated successfully")
     )
 )
 
@@ -77,15 +74,12 @@
                                (content-url (string-ascii 256)) 
                                (access-control (list 100 principal)))
     (begin
-        (if (not (content-exists? content-id))
-            (begin
-                (map-insert user-content {content-id: content-id} 
-                            {owner: tx-sender, content-url: content-url, access-control: access-control})
-                (print "Content uploaded successfully")
-                (ok "Content uploaded successfully")
-            )
-            (err "Content ID already exists.")
-        )
+        ;; Ensure the content ID is unique
+        (asserts! (not (content-exists? content-id)) (err u1004)) ;; Error code for "Content ID already exists"
+        (map-insert user-content {content-id: content-id} 
+                    {owner: tx-sender, content-url: content-url, access-control: access-control})
+        (print "Content uploaded successfully")
+        (ok "Content uploaded successfully")
     )
 )
 
@@ -94,6 +88,7 @@
                                (content-url (string-ascii 256)) 
                                (access-control (list 100 principal)))
     (begin
+        ;; Ensure the content exists and the user is the owner
         (match (only-owner content-id)
             success
             (begin
@@ -110,14 +105,15 @@
 ;; Retrieve the content URL if the user has access
 (define-read-only (get-content (content-id uint))
     (begin
+        ;; Ensure the content exists and the user has access
         (match (map-get? user-content {content-id: content-id})
             content
             (if (or (is-eq (tuple-get owner content) tx-sender) 
                     (contains tx-sender (tuple-get access-control content)))
                 (ok (tuple-get content-url content))
-                (err "You do not have access to this content.")
+                (err u1005) ;; Error code for "Access denied"
             )
-            (err "Content not found.")
+            (err u1003) ;; Error code for "Content not found"
         )
     )
 )
@@ -125,23 +121,23 @@
 ;; Grant access to a new user for specific content
 (define-public (grant-access (content-id uint) (new-user principal))
     (begin
+        ;; Ensure the content exists and the user is the owner
         (match (only-owner content-id)
             success
             (match (map-get? user-content {content-id: content-id})
                 content
                 (let ((current-access (tuple-get access-control content)))
-                    (if (< (len current-access) 100)
-                        (let ((updated-access-control (append current-access (list new-user))))
-                            (map-set user-content {content-id: content-id} 
-                                {owner: tx-sender, content-url: (tuple-get content-url content), 
-                                 access-control: updated-access-control})
-                            (print "Access granted successfully")
-                            (ok "Access granted successfully")
-                        )
-                        (err "Access control list is full.")
+                    ;; Ensure the access list isn't full
+                    (asserts! (< (len current-access) 100) (err u1006)) ;; Error code for "Access control list full"
+                    (let ((updated-access-control (append current-access (list new-user))))
+                        (map-set user-content {content-id: content-id} 
+                            {owner: tx-sender, content-url: (tuple-get content-url content), 
+                             access-control: updated-access-control})
+                        (print "Access granted successfully")
+                        (ok "Access granted successfully")
                     )
                 )
-                (err "Content not found.")
+                (err u1003) ;; Error code for "Content not found"
             )
             err err
         )
@@ -153,7 +149,9 @@
 (define-public (tip-content-creator (recipient principal) (content-id uint) (amount uint))
     (begin
         ;; Ensure the content exists
-        (asserts! (content-exists? content-id) (err u2001)) ;; Error code for "Content not found."
+        (asserts! (content-exists? content-id) (err u1003)) ;; Error code for "Content not found"
+        ;; Ensure the sender has enough balance
+        (asserts! (>= (ft-get-balance platform-token tx-sender) amount) (err u1001)) ;; Error code for "Insufficient balance"
         ;; Transfer the tokens
         (try! (ft-transfer? platform-token amount tx-sender recipient))
         (print (concat "Tipped " (uint-to-string amount) " tokens to " (principal-to-string recipient)))
@@ -168,7 +166,9 @@
 (define-public (subscribe (content-id uint) (amount uint))
     (begin
         ;; Ensure the content exists
-        (asserts! (content-exists? content-id) (err u2001)) ;; Error code for "Content not found."
+        (asserts! (content-exists? content-id) (err u1003)) ;; Error code for "Content not found"
+        ;; Ensure the sender has enough balance
+        (asserts! (>= (ft-get-balance platform-token tx-sender) amount) (err u1001)) ;; Error code for "Insufficient balance"
         ;; Transfer the tokens to the content owner
         (match (map-get? user-content {content-id: content-id})
             content
@@ -179,7 +179,7 @@
                 (print (concat "Subscribed to content ID " (uint-to-string content-id) " with " (uint-to-string amount) " tokens"))
                 (ok amount)
             )
-            (err u2002) ;; Error code for "Unable to retrieve content owner."
+            (err u1007) ;; Error code for "Unable to retrieve content owner"
         )
     )
 )
@@ -202,9 +202,9 @@
             content
             (if (is-eq (tuple-get owner content) tx-sender)
                 (ok true)
-                (err "You are not the owner of this content.")
+                (err u1000) ;; Error code for "Unauthorized action"
             )
-            (err "Content not found.")
+            (err u1003) ;; Error code for "Content not found"
         )
     )
 )
