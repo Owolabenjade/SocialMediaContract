@@ -8,6 +8,9 @@
 ;; Admin role for managing certain functions
 (define-data-var admin principal tx-sender)
 
+;; Event for admin changes
+(define-event admin-changed (new-admin principal))
+
 ;; Function to change the admin
 (define-public (set-admin (new-admin principal))
     (begin
@@ -15,7 +18,7 @@
         (asserts! (is-eq tx-sender (var-get admin)) (err u1004)) ;; Error code for "Unauthorized action"
         ;; Set the new admin
         (var-set admin new-admin)
-        (print (concat "Admin role changed to " (principal-to-string new-admin)))
+        (emit-event admin-changed new-admin)
         (ok new-admin)
     )
 )
@@ -24,11 +27,14 @@
 ;; Data structure for storing user profile information
 (define-map user-profiles {user: principal} {username: (string-ascii 32), bio: (string-ascii 256)})
 
+;; Event for profile updates
+(define-event profile-updated (user principal username (string-ascii 32) bio (string-ascii 256)))
+
 ;; Create or update a user profile
 (define-public (set-profile (username (string-ascii 32)) (bio (string-ascii 256)))
     (begin
         (map-set user-profiles {user: tx-sender} {username: username, bio: bio})
-        (print (concat "Profile updated for user " (principal-to-string tx-sender)))
+        (emit-event profile-updated tx-sender username bio)
         (ok {username: username, bio: bio})
     )
 )
@@ -48,6 +54,12 @@
 ;; Variable to keep track of content IDs
 (define-data-var content-counter uint 0)
 
+;; Event for content creation
+(define-event content-created (content-id uint owner principal content-url (string-ascii 256)))
+
+;; Event for content deletion
+(define-event content-deleted (content-id uint owner principal))
+
 ;; Create new content
 (define-public (create-content (content-url (string-ascii 256)))
     (begin
@@ -55,7 +67,7 @@
         (var-set content-counter (+ (var-get content-counter) u1))
         (let ((new-content-id (var-get content-counter)))
             (map-set user-content {content-id: new-content-id} {owner: tx-sender, content-url: content-url})
-            (print (concat "Content created with ID " (uint-to-string new-content-id) " by " (principal-to-string tx-sender)))
+            (emit-event content-created new-content-id tx-sender content-url)
             (ok new-content-id)
         )
     )
@@ -75,7 +87,7 @@
         ;; Ensure only the owner can delete the content
         (only-owner content-id)
         (map-delete user-content {content-id: content-id})
-        (print (concat "Content with ID " (uint-to-string content-id) " deleted by " (principal-to-string tx-sender)))
+        (emit-event content-deleted content-id tx-sender)
         (ok true)
     )
 )
@@ -97,6 +109,15 @@
 ;; Quorum requirement for proposal execution (e.g., at least 100 votes)
 (define-constant quorum-requirement uint 100)
 
+;; Event for proposal creation
+(define-event proposal-created (proposal-id uint proposer principal description (string-ascii 256)))
+
+;; Event for voting
+(define-event vote-recorded (proposal-id uint voter principal support bool vote-weight uint))
+
+;; Event for proposal execution
+(define-event proposal-executed (proposal-id uint))
+
 ;; Create a new proposal
 (define-public (create-proposal (description (string-ascii 256)))
     (begin
@@ -109,7 +130,7 @@
                          votes-for: u0, 
                          votes-against: u0, 
                          executed: false})
-            (print (concat "Proposal created with ID " (uint-to-string new-proposal-id) " by " (principal-to-string tx-sender)))
+            (emit-event proposal-created new-proposal-id tx-sender description)
             (ok new-proposal-id)
         )
     )
@@ -139,7 +160,7 @@
                               votes-against: (+ (tuple-get votes-against proposal) vote-weight), 
                               executed: (tuple-get executed proposal)})
                 )
-                (print (concat "Vote recorded on proposal ID " (uint-to-string proposal-id) " by " (principal-to-string tx-sender) " with " (uint-to-string vote-weight) " tokens"))
+                (emit-event vote-recorded proposal-id tx-sender support vote-weight)
                 (ok "Vote recorded")
             )
             (err u1008) ;; Error code for "Proposal not found"
@@ -166,7 +187,7 @@
                               executed: true})
                     ;; Execute the proposal's logic here (this is a placeholder)
                     ;; Example: upgrading the platform, changing rules, etc.
-                    (print (concat "Executed proposal ID " (uint-to-string proposal-id)))
+                    (emit-event proposal-executed proposal-id)
                     (ok "Proposal executed successfully")
                 )
                 (err u1009) ;; Error code for "Proposal cannot be executed"
@@ -180,6 +201,12 @@
 ;; Define a fee for subscription
 (define-constant subscription-fee uint 100)
 
+;; Event for tipping
+(define-event tipped (recipient principal amount uint))
+
+;; Event for subscription
+(define-event subscribed (user principal subscriber principal subscription-fee uint))
+
 ;; Function to tip another user
 (define-public (tip-user (recipient principal) (amount uint))
     (begin
@@ -187,7 +214,7 @@
         (asserts! (>= (ft-get-balance platform-token tx-sender) amount) (err u1001)) ;; Error code for "Insufficient balance"
         ;; Transfer tokens to the recipient
         (ft-transfer? platform-token tx-sender recipient amount)
-        (print (concat "Tipped " (uint-to-string amount) " tokens to " (principal-to-string recipient)))
+        (emit-event tipped recipient amount)
         (ok "Tip successful")
     )
 )
@@ -199,7 +226,7 @@
         (asserts! (>= (ft-get-balance platform-token tx-sender) subscription-fee) (err u1001)) ;; Error code for "Insufficient balance"
         ;; Transfer subscription fee to the user's account
         (ft-transfer? platform-token tx-sender user subscription-fee)
-        (print (concat "Subscribed to user " (principal-to-string user) " with a fee of " (uint-to-string subscription-fee) " tokens"))
+        (emit-event subscribed user tx-sender subscription-fee)
         (ok "Subscription successful")
     )
 )
@@ -212,14 +239,5 @@
 
 ;; Helper function to ensure only the owner can modify content
 (define-private (only-owner (content-id uint))
-    (begin
-        (match (map-get? user-content {content-id: content-id})
-            content
-            (if (is-eq (tuple-get owner content) tx-sender)
-                (ok true)
-                (err u1005) ;; Error code for "Unauthorized action"
-            )
-            (err u1003) ;; Error code for "Content not found"
-        )
-    )
+    (asserts! (is-eq tx-sender (get (map-get user-content {content-id: content-id}) owner)) (err u1005)) ;; Error code for "Unauthorized action"
 )
