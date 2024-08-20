@@ -2,6 +2,15 @@
 ;; Decentralized Social Media Platform Smart Contract
 ;; ==============================
 
+;; ========== Constants for Error Codes ========== ;;
+(define-constant ERR_UNAUTHORIZED u1004)
+(define-constant ERR_PROFILE_NOT_FOUND u1002)
+(define-constant ERR_CONTENT_NOT_FOUND u1003)
+(define-constant ERR_INSUFFICIENT_BALANCE u1001)
+(define-constant ERR_PROPOSAL_NOT_FOUND u1008)
+(define-constant ERR_CANNOT_EXECUTE_PROPOSAL u1009)
+(define-constant ERR_INVALID_AMOUNT u1010)
+
 ;; ========== Platform Token Creation ========== ;;
 (define-fungible-token platform-token)
 
@@ -14,9 +23,7 @@
 ;; Function to change the admin
 (define-public (set-admin (new-admin principal))
     (begin
-        ;; Ensure only the current admin can change the admin role
-        (asserts! (is-eq tx-sender (var-get admin)) (err u1004)) ;; Error code for "Unauthorized action"
-        ;; Set the new admin
+        (asserts! (is-eq tx-sender (var-get admin)) ERR_UNAUTHORIZED)
         (var-set admin new-admin)
         (emit-event admin-changed new-admin)
         (ok new-admin)
@@ -33,9 +40,11 @@
 ;; Create or update a user profile
 (define-public (set-profile (username (string-ascii 32)) (bio (string-ascii 256)))
     (begin
+        (asserts! (> (len username) 0) ERR_INVALID_AMOUNT)
+        (asserts! (> (len bio) 0) ERR_INVALID_AMOUNT)
         (map-set user-profiles {user: tx-sender} {username: username, bio: bio})
         (emit-event profile-updated tx-sender username bio)
-        (ok {username: username, bio: bio})
+        (ok true)
     )
 )
 
@@ -43,7 +52,7 @@
 (define-read-only (get-profile (user principal))
     (match (map-get? user-profiles {user: user})
         profile (ok profile)
-        (err u1002) ;; Error code for "Profile not found"
+        (err ERR_PROFILE_NOT_FOUND)
     )
 )
 
@@ -54,16 +63,14 @@
 ;; Variable to keep track of content IDs
 (define-data-var content-counter uint 0)
 
-;; Event for content creation
+;; Event for content creation and deletion
 (define-event content-created (content-id uint owner principal content-url (string-ascii 256)))
-
-;; Event for content deletion
 (define-event content-deleted (content-id uint owner principal))
 
 ;; Create new content
 (define-public (create-content (content-url (string-ascii 256)))
     (begin
-        ;; Increment the content counter to generate a new content ID
+        (asserts! (> (len content-url) 0) ERR_INVALID_AMOUNT)
         (var-set content-counter (+ (var-get content-counter) u1))
         (let ((new-content-id (var-get content-counter)))
             (map-set user-content {content-id: new-content-id} {owner: tx-sender, content-url: content-url})
@@ -77,14 +84,14 @@
 (define-read-only (get-content (content-id uint))
     (match (map-get? user-content {content-id: content-id})
         content (ok content)
-        (err u1003) ;; Error code for "Content not found"
+        (err ERR_CONTENT_NOT_FOUND)
     )
 )
 
 ;; Delete content
 (define-public (delete-content (content-id uint))
     (begin
-        ;; Ensure only the owner can delete the content
+        (asserts! (is-some (map-get? user-content {content-id: content-id})) ERR_CONTENT_NOT_FOUND)
         (only-owner content-id)
         (map-delete user-content {content-id: content-id})
         (emit-event content-deleted content-id tx-sender)
@@ -93,8 +100,6 @@
 )
 
 ;; ========== Governance Contract ========== ;;
-;; This section handles platform governance, allowing token holders to propose changes and vote on them.
-
 ;; Data structure to store proposals
 (define-data-var proposals (map uint 
                                  {proposer: principal, 
@@ -109,19 +114,15 @@
 ;; Quorum requirement for proposal execution (e.g., at least 100 votes)
 (define-constant quorum-requirement uint 100)
 
-;; Event for proposal creation
+;; Events for governance activities
 (define-event proposal-created (proposal-id uint proposer principal description (string-ascii 256)))
-
-;; Event for voting
 (define-event vote-recorded (proposal-id uint voter principal support bool vote-weight uint))
-
-;; Event for proposal execution
 (define-event proposal-executed (proposal-id uint))
 
 ;; Create a new proposal
 (define-public (create-proposal (description (string-ascii 256)))
     (begin
-        ;; Increment the proposal counter to generate a new proposal ID
+        (asserts! (> (len description) 0) ERR_INVALID_AMOUNT)
         (var-set proposal-counter (+ (var-get proposal-counter) u1))
         (let ((new-proposal-id (var-get proposal-counter)))
             (map-insert proposals new-proposal-id 
@@ -139,13 +140,11 @@
 ;; Vote on a proposal
 (define-public (vote (proposal-id uint) (support bool) (vote-weight uint))
     (begin
-        ;; Ensure the proposal exists
+        (asserts! (> vote-weight 0) ERR_INVALID_AMOUNT)
         (match (map-get? proposals proposal-id)
             proposal
             (begin
-                ;; Ensure the voter has enough tokens
-                (asserts! (>= (ft-get-balance platform-token tx-sender) vote-weight) (err u1001)) ;; Error code for "Insufficient balance"
-                ;; Update the vote count
+                (asserts! (>= (ft-get-balance platform-token tx-sender) vote-weight) ERR_INSUFFICIENT_BALANCE)
                 (if support
                     (map-set proposals proposal-id 
                              {proposer: (tuple-get proposer proposal), 
@@ -161,9 +160,9 @@
                               executed: (tuple-get executed proposal)})
                 )
                 (emit-event vote-recorded proposal-id tx-sender support vote-weight)
-                (ok "Vote recorded")
+                (ok true)
             )
-            (err u1008) ;; Error code for "Proposal not found"
+            (err ERR_PROPOSAL_NOT_FOUND)
         )
     )
 )
@@ -171,28 +170,24 @@
 ;; Execute a proposal if it passes
 (define-public (execute-proposal (proposal-id uint))
     (begin
-        ;; Ensure the proposal exists and hasn't been executed
         (match (map-get? proposals proposal-id)
             proposal
             (if (and (not (tuple-get executed proposal)) 
                      (> (tuple-get votes-for proposal) (tuple-get votes-against proposal))
                      (>= (+ (tuple-get votes-for proposal) (tuple-get votes-against proposal)) quorum-requirement))
                 (begin
-                    ;; Mark the proposal as executed
                     (map-set proposals proposal-id 
                              {proposer: (tuple-get proposer proposal), 
                               description: (tuple-get description proposal), 
                               votes-for: (tuple-get votes-for proposal), 
                               votes-against: (tuple-get votes-against proposal), 
                               executed: true})
-                    ;; Execute the proposal's logic here (this is a placeholder)
-                    ;; Example: upgrading the platform, changing rules, etc.
                     (emit-event proposal-executed proposal-id)
                     (ok "Proposal executed successfully")
                 )
-                (err u1009) ;; Error code for "Proposal cannot be executed"
+                (err ERR_CANNOT_EXECUTE_PROPOSAL)
             )
-            (err u1008) ;; Error code for "Proposal not found"
+            (err ERR_PROPOSAL_NOT_FOUND)
         )
     )
 )
@@ -201,18 +196,14 @@
 ;; Define a fee for subscription
 (define-constant subscription-fee uint 100)
 
-;; Event for tipping
+;; Events for tipping and subscription
 (define-event tipped (recipient principal amount uint))
-
-;; Event for subscription
 (define-event subscribed (user principal subscriber principal subscription-fee uint))
 
 ;; Function to tip another user
 (define-public (tip-user (recipient principal) (amount uint))
     (begin
-        ;; Ensure the sender has sufficient tokens
-        (asserts! (>= (ft-get-balance platform-token tx-sender) amount) (err u1001)) ;; Error code for "Insufficient balance"
-        ;; Transfer tokens to the recipient
+        (asserts! (>= (ft-get-balance platform-token tx-sender) amount) ERR_INSUFFICIENT_BALANCE)
         (ft-transfer? platform-token tx-sender recipient amount)
         (emit-event tipped recipient amount)
         (ok "Tip successful")
@@ -222,9 +213,7 @@
 ;; Function to subscribe to another user's content
 (define-public (subscribe (user principal))
     (begin
-        ;; Ensure the sender has sufficient tokens for the subscription fee
-        (asserts! (>= (ft-get-balance platform-token tx-sender) subscription-fee) (err u1001)) ;; Error code for "Insufficient balance"
-        ;; Transfer subscription fee to the user's account
+        (asserts! (>= (ft-get-balance platform-token tx-sender) subscription-fee) ERR_INSUFFICIENT_BALANCE)
         (ft-transfer? platform-token tx-sender user subscription-fee)
         (emit-event subscribed user tx-sender subscription-fee)
         (ok "Subscription successful")
@@ -239,5 +228,6 @@
 
 ;; Helper function to ensure only the owner can modify content
 (define-private (only-owner (content-id uint))
-    (asserts! (is-eq tx-sender (get (map-get user-content {content-id: content-id}) owner)) (err u1005)) ;; Error code for "Unauthorized action"
+    (asserts! (is-eq tx-sender (get (map-get user-content {content-id: content-id}) owner)) ERR_UNAUTHORIZED)
 )
+
