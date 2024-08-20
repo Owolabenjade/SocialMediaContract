@@ -10,6 +10,7 @@
 (define-constant ERR_PROPOSAL_NOT_FOUND u1008)
 (define-constant ERR_CANNOT_EXECUTE_PROPOSAL u1009)
 (define-constant ERR_INVALID_AMOUNT u1010)
+(define-constant ERR_RATE_LIMITED u1011)
 
 ;; ========== Platform Token Creation ========== ;;
 (define-fungible-token platform-token)
@@ -40,7 +41,7 @@
 
 (define-public (set-profile (username (string-ascii MAX_USERNAME_LENGTH)) (bio (string-ascii MAX_BIO_LENGTH)))
     (begin
-        (let ((existing-profile (map-get? user-profiles {user: tx-sender})))
+        (let ((existing-profile (default-to {username: "", bio: ""} (map-get? user-profiles {user: tx-sender}))))
             (if (and 
                  (is-eq (get username existing-profile) username) 
                  (is-eq (get bio existing-profile) bio))
