@@ -96,7 +96,7 @@
 
 (define-data-var proposal-counter uint 0)
 
-(define-constant quorum-requirement uint 100)
+(define-constant quorum-requirement 100)
 
 (define-public (create-proposal (description (string-ascii 256)))
     (begin
