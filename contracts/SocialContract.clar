@@ -184,5 +184,5 @@
 )
 
 (define-private (only-owner (content-id uint))
-    (asserts! (is-eq tx-sender (get (map-get user-content {content-id: content-id}) owner)) ERR_UNAUTHORIZED)
+    (asserts! (is-eq tx-sender (get (map-get? user-content {content-id: content-id}) owner)) ERR_UNAUTHORIZED)
 )
