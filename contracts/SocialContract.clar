@@ -86,12 +86,13 @@
 )
 
 ;; ========== Governance Contract ========== ;;
-(define-data-var proposals (map uint 
-                                 {proposer: principal, 
-                                  description: (string-ascii 256), 
-                                  votes-for: uint, 
-                                  votes-against: uint, 
-                                  executed: bool}))
+(define-map proposals
+    {proposal-id: uint}
+    {proposer: principal, 
+     description: (string-ascii 256), 
+     votes-for: uint, 
+     votes-against: uint, 
+     executed: bool})
 
 (define-data-var proposal-counter uint 0)
 
@@ -114,22 +115,28 @@
         (asserts! (> vote-weight 0) ERR_INVALID_AMOUNT)
         (let ((proposal (map-get? proposals {proposal-id: proposal-id})))
             (asserts! (is-some proposal) ERR_PROPOSAL_NOT_FOUND)
-            (if support
-                (map-set proposals {proposal-id: proposal-id}
-                         {proposer: (get proposer proposal), 
-                          description: (get description proposal), 
-                          votes-for: (+ (get votes-for proposal) vote-weight), 
-                          votes-against: (get votes-against proposal), 
-                          executed: (get executed proposal)})
-                (map-set proposals {proposal-id: proposal-id}
-                         {proposer: (get proposer proposal), 
-                          description: (get description proposal), 
-                          votes-for: (get votes-for proposal), 
-                          votes-against: (+ (get votes-against proposal) vote-weight), 
-                          executed: (get executed proposal)})
+            (match proposal
+                proposal-data
+                (begin
+                    (if support
+                        (map-set proposals {proposal-id: proposal-id}
+                                 {proposer: (get proposer proposal-data), 
+                                  description: (get description proposal-data), 
+                                  votes-for: (+ (get votes-for proposal-data) vote-weight), 
+                                  votes-against: (get votes-against proposal-data), 
+                                  executed: (get executed proposal-data)})
+                        (map-set proposals {proposal-id: proposal-id}
+                                 {proposer: (get proposer proposal-data), 
+                                  description: (get description proposal-data), 
+                                  votes-for: (get votes-for proposal-data), 
+                                  votes-against: (+ (get votes-against proposal-data) vote-weight), 
+                                  executed: (get executed proposal_data)})
+                    )
+                    (print {action: "vote-recorded", proposal-id: proposal-id, voter: tx-sender, support: support, vote-weight: vote-weight})
+                    (ok true)
+                )
+                (err ERR_PROPOSAL_NOT_FOUND)
             )
-            (print {action: "vote-recorded", proposal-id: proposal-id, voter: tx-sender, support: support, vote-weight: vote-weight})
-            (ok true)
         )
     )
 )
@@ -138,20 +145,24 @@
     (begin
         (let ((proposal (map-get? proposals {proposal-id: proposal-id})))
             (asserts! (is-some proposal) ERR_PROPOSAL_NOT_FOUND)
-            (if (and (not (get executed proposal)) 
-                     (> (get votes-for proposal) (get votes-against proposal))
-                     (>= (+ (get votes-for proposal) (get votes-against proposal)) quorum-requirement))
-                (begin
-                    (map-set proposals {proposal-id: proposal-id}
-                             {proposer: (get proposer proposal), 
-                              description: (get description proposal), 
-                              votes-for: (get votes-for proposal), 
-                              votes-against: (get votes-against proposal), 
-                              executed: true})
-                    (print {action: "proposal-executed", proposal-id: proposal-id})
-                    (ok "Proposal executed successfully")
+            (match proposal
+                proposal-data
+                (if (and (not (get executed proposal_data)) 
+                         (> (get votes-for proposal_data) (get votes-against proposal_data))
+                         (>= (+ (get votes-for proposal_data) (get votes-against proposal_data)) quorum-requirement))
+                    (begin
+                        (map-set proposals {proposal-id: proposal-id}
+                                 {proposer: (get proposer proposal_data), 
+                                  description: (get description proposal_data), 
+                                  votes-for: (get votes-for proposal_data), 
+                                  votes-against: (get votes-against proposal_data), 
+                                  executed: true})
+                        (print {action: "proposal-executed", proposal-id: proposal-id})
+                        (ok "Proposal executed successfully")
+                    )
+                    (err ERR_CANNOT_EXECUTE_PROPOSAL)
                 )
-                (err ERR_CANNOT_EXECUTE_PROPOSAL)
+                (err ERR_PROPOSAL_NOT_FOUND)
             )
         )
     )
