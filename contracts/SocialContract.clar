@@ -18,15 +18,12 @@
 ;; Admin role for managing certain functions
 (define-data-var admin principal tx-sender)
 
-;; Event for admin changes
-(define-event admin-changed (new-admin principal))
-
-;; Function to change the admin
+;; Logging admin changes using print
 (define-public (set-admin (new-admin principal))
     (begin
         (asserts! (is-eq tx-sender (var-get admin)) ERR_UNAUTHORIZED)
         (var-set admin new-admin)
-        (emit-event admin-changed new-admin)
+        (print {action: "admin-changed", new-admin: new-admin})
         (ok new-admin)
     )
 )
@@ -37,8 +34,6 @@
 
 (define-map user-profiles {user: principal} {username: (string-ascii MAX_USERNAME_LENGTH), bio: (string-ascii MAX_BIO_LENGTH)})
 
-(define-event profile-updated (user principal username (string-ascii MAX_USERNAME_LENGTH) bio (string-ascii MAX_BIO_LENGTH)))
-
 (define-public (set-profile (username (string-ascii MAX_USERNAME_LENGTH)) (bio (string-ascii MAX_BIO_LENGTH)))
     (begin
         (let ((existing-profile (default-to {username: "", bio: ""} (map-get? user-profiles {user: tx-sender}))))
@@ -48,7 +43,7 @@
                 (ok "No update required")
                 (begin
                     (map-set user-profiles {user: tx-sender} {username: username, bio: bio})
-                    (emit-event profile-updated tx-sender username bio)
+                    (print {action: "profile-updated", user: tx-sender, username: username, bio: bio})
                     (ok true)
                 )
             )
@@ -65,15 +60,12 @@
 
 (define-data-var content-counter uint 0)
 
-(define-event content-created (content-id uint owner principal content-url (string-ascii 256)))
-(define-event content-deleted (content-id uint owner principal))
-
 (define-public (create-content (content-url (string-ascii 256)))
     (begin
         (var-set content-counter (+ (var-get content-counter) u1))
         (let ((new-content-id (var-get content-counter)))
             (map-set user-content {content-id: new-content-id} {owner: tx-sender, content-url: content-url})
-            (emit-event content-created new-content-id tx-sender content-url)
+            (print {action: "content-created", content-id: new-content-id, owner: tx-sender, content-url: content-url})
             (ok new-content-id)
         )
     )
@@ -88,7 +80,7 @@
         (asserts! (is-some (map-get? user-content {content-id: content-id})) ERR_CONTENT_NOT_FOUND)
         (only-owner content-id)
         (map-delete user-content {content-id: content-id})
-        (emit-event content-deleted content-id tx-sender)
+        (print {action: "content-deleted", content-id: content-id, owner: tx-sender})
         (ok true)
     )
 )
@@ -105,17 +97,13 @@
 
 (define-constant quorum-requirement uint 100)
 
-(define-event proposal-created (proposal-id uint proposer principal description (string-ascii 256)))
-(define-event vote-recorded (proposal-id uint voter principal support bool vote-weight uint))
-(define-event proposal-executed (proposal-id uint))
-
 (define-public (create-proposal (description (string-ascii 256)))
     (begin
         (var-set proposal-counter (+ (var-get proposal-counter) u1))
         (let ((new-proposal-id (var-get proposal-counter)))
             (map-set proposals {proposal-id: new-proposal-id}
                      {proposer: tx-sender, description: description, votes-for: u0, votes-against: u0, executed: false})
-            (emit-event proposal-created new-proposal-id tx-sender description)
+            (print {action: "proposal-created", proposal-id: new-proposal-id, proposer: tx-sender, description: description})
             (ok new-proposal-id)
         )
     )
@@ -140,7 +128,7 @@
                           votes-against: (+ (get votes-against proposal) vote-weight), 
                           executed: (get executed proposal)})
             )
-            (emit-event vote-recorded proposal-id tx-sender support vote-weight)
+            (print {action: "vote-recorded", proposal-id: proposal-id, voter: tx-sender, support: support, vote-weight: vote-weight})
             (ok true)
         )
     )
@@ -160,7 +148,7 @@
                               votes-for: (get votes-for proposal), 
                               votes-against: (get votes-against proposal), 
                               executed: true})
-                    (emit-event proposal-executed proposal-id)
+                    (print {action: "proposal-executed", proposal-id: proposal-id})
                     (ok "Proposal executed successfully")
                 )
                 (err ERR_CANNOT_EXECUTE_PROPOSAL)
@@ -172,14 +160,11 @@
 ;; ========== Token-Based Tipping and Subscription Mechanisms ========== ;;
 (define-constant subscription-fee uint 100)
 
-(define-event tipped (recipient principal amount uint))
-(define-event subscribed (user principal subscriber principal subscription-fee uint))
-
 (define-public (tip-user (recipient principal) (amount uint))
     (begin
         (asserts! (>= (ft-get-balance platform-token tx-sender) amount) ERR_INSUFFICIENT_BALANCE)
         (ft-transfer? platform-token tx-sender recipient amount)
-        (emit-event tipped recipient amount)
+        (print {action: "tipped", recipient: recipient, amount: amount})
         (ok "Tip successful")
     )
 )
@@ -188,7 +173,7 @@
     (begin
         (asserts! (>= (ft-get-balance platform-token tx-sender) subscription-fee) ERR_INSUFFICIENT_BALANCE)
         (ft-transfer? platform-token tx-sender user subscription-fee)
-        (emit-event subscribed user tx-sender subscription-fee)
+        (print {action: "subscribed", user: user, subscriber: tx-sender, subscription-fee: subscription-fee})
         (ok "Subscription successful")
     )
 )
