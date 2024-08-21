@@ -25,9 +25,9 @@
             (begin
                 (var-set admin new-admin)
                 (print {action: "admin-changed", new-admin: new-admin})
-                (ok new-admin) ;; Corrected to ensure a response type is returned
+                (ok new-admin)
             )
-            (err ERR_UNAUTHORIZED) ;; Ensures a response type is returned
+            (err ERR_UNAUTHORIZED)
         )
     )
 )
@@ -48,7 +48,7 @@
                 (begin
                     (map-set user-profiles {user: tx-sender} {username: username, bio: bio})
                     (print {action: "profile-updated", user: tx-sender, username: username, bio: bio})
-                    (ok true)
+                    (ok "Profile updated successfully")
                 )
             )
         )
