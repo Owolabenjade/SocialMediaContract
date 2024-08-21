@@ -62,7 +62,7 @@
 ;; ========== Content Management ========== ;;
 (define-map user-content {content-id: uint} {owner: principal, content-url: (string-ascii 256)})
 
-(define-data-var content-counter uint 0)
+(define-data-var content-counter uint u0)
 
 (define-public (create-content (content-url (string-ascii 256)))
     (begin
@@ -98,7 +98,7 @@
      votes-against: uint, 
      executed: bool})
 
-(define-data-var proposal-counter uint 0)
+(define-data-var proposal-counter uint u0)
 
 (define-constant quorum-requirement 100)
 
