@@ -36,9 +36,9 @@
 (define-constant MAX_USERNAME_LENGTH u20)
 (define-constant MAX_BIO_LENGTH u100)
 
-(define-map user-profiles {user: principal} {username: (string-ascii MAX_USERNAME_LENGTH), bio: (string-ascii MAX_BIO_LENGTH)})
+(define-map user-profiles {user: principal} {username: (string-ascii 20), bio: (string-ascii 100)})
 
-(define-public (set-profile (username (string-ascii MAX_USERNAME_LENGTH)) (bio (string-ascii MAX_BIO_LENGTH)))
+(define-public (set-profile (username (string-ascii 20)) (bio (string-ascii 100)))
     (begin
         (let ((existing-profile (default-to {username: "", bio: ""} (map-get? user-profiles {user: tx-sender}))))
             (if (and 
