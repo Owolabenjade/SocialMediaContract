@@ -25,7 +25,7 @@
         (asserts! (is-eq tx-sender (var-get admin)) ERR_UNAUTHORIZED)
         (var-set admin new-admin)
         (print {action: "admin-changed", new-admin: new-admin})
-        (ok new-admin)
+        (ok ())
     )
 )
 
@@ -40,16 +40,15 @@
         (asserts! (<= (len username) MAX_USERNAME_LENGTH) ERR_INVALID_INPUT)
         (asserts! (<= (len bio) MAX_BIO_LENGTH) ERR_INVALID_INPUT)
         (let ((existing-profile (map-get? user-profiles {user: tx-sender})))
-            (match existing-profile
-                profile (if (or (not (is-eq (get username profile) username))
-                                (not (is-eq (get bio profile) bio)))
-                            (begin
-                                (map-set user-profiles {user: tx-sender} {username: username, bio: bio})
-                                (print {action: "profile-updated", user: tx-sender, username: username, bio: bio})
-                                (ok "Profile updated successfully"))
-                            (ok "No update required"))
-                (err ERR_PROFILE_NOT_FOUND)))
-    )
+            (if existing-profile
+                (if (or (not (is-eq (get username existing-profile) username))
+                        (not (is-eq (get bio existing-profile) bio)))
+                    (begin
+                        (map-set user-profiles {user: tx-sender} {username: username, bio: bio})
+                        (print {action: "profile-updated", user: tx-sender, username: username, bio: bio})
+                        (ok ()))
+                    (ok ()))
+                (err ERR_PROFILE_NOT_FOUND)))))
 )
 
 ;; ========== Content Management ========== ;;
