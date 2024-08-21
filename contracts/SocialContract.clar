@@ -11,6 +11,7 @@
 (define-constant ERR_CANNOT_EXECUTE_PROPOSAL u1009)
 (define-constant ERR_INVALID_AMOUNT u1010)
 (define-constant ERR_RATE_LIMITED u1011)
+(define-constant ERR_INVALID_INPUT u1012)
 
 ;; ========== Platform Token Creation ========== ;;
 (define-fungible-token platform-token)
@@ -21,14 +22,10 @@
 ;; Logging admin changes using print
 (define-public (set-admin (new-admin principal))
     (begin
-        (if (is-eq tx-sender (var-get admin))
-            (begin
-                (var-set admin new-admin)
-                (print {action: "admin-changed", new-admin: new-admin})
-                (ok new-admin)
-            )
-            (err ERR_UNAUTHORIZED)
-        )
+        (asserts! (is-eq tx-sender (var-get admin)) ERR_UNAUTHORIZED)
+        (var-set admin new-admin)
+        (print {action: "admin-changed", new-admin: new-admin})
+        (ok new-admin)
     )
 )
 
@@ -40,23 +37,19 @@
 
 (define-public (set-profile (username (string-ascii 20)) (bio (string-ascii 100)))
     (begin
-        (let ((existing-profile (default-to {username: "", bio: ""} (map-get? user-profiles {user: tx-sender}))))
-            (if (and 
-                 (is-eq (get username existing-profile) username) 
-                 (is-eq (get bio existing-profile) bio))
-                (ok "No update required")
-                (begin
-                    (map-set user-profiles {user: tx-sender} {username: username, bio: bio})
-                    (print {action: "profile-updated", user: tx-sender, username: username, bio: bio})
-                    (ok "Profile updated successfully")
-                )
-            )
-        )
+        (asserts! (<= (len username) MAX_USERNAME_LENGTH) ERR_INVALID_INPUT)
+        (asserts! (<= (len bio) MAX_BIO_LENGTH) ERR_INVALID_INPUT)
+        (let ((existing-profile (map-get? user-profiles {user: tx-sender})))
+            (match existing-profile
+                profile (if (or (not (is-eq (get username profile) username))
+                                (not (is-eq (get bio profile) bio)))
+                            (begin
+                                (map-set user-profiles {user: tx-sender} {username: username, bio: bio})
+                                (print {action: "profile-updated", user: tx-sender, username: username, bio: bio})
+                                (ok "Profile updated successfully"))
+                            (ok "No update required"))
+                (err ERR_PROFILE_NOT_FOUND)))
     )
-)
-
-(define-read-only (get-profile (user principal))
-    (map-get? user-profiles {user: user})
 )
 
 ;; ========== Content Management ========== ;;
@@ -66,26 +59,13 @@
 
 (define-public (create-content (content-url (string-ascii 256)))
     (begin
+        (asserts! (<= (len content-url) 256) ERR_INVALID_INPUT)
         (var-set content-counter (+ (var-get content-counter) u1))
         (let ((new-content-id (var-get content-counter)))
             (map-set user-content {content-id: new-content-id} {owner: tx-sender, content-url: content-url})
             (print {action: "content-created", content-id: new-content-id, owner: tx-sender, content-url: content-url})
             (ok new-content-id)
         )
-    )
-)
-
-(define-read-only (get-content (content-id uint))
-    (map-get? user-content {content-id: content-id})
-)
-
-(define-public (delete-content (content-id uint))
-    (begin
-        (asserts! (is-some (map-get? user-content {content-id: content-id})) ERR_CONTENT_NOT_FOUND)
-        (only-owner content-id)
-        (map-delete user-content {content-id: content-id})
-        (print {action: "content-deleted", content-id: content-id, owner: tx-sender})
-        (ok true)
     )
 )
 
@@ -104,60 +84,13 @@
 
 (define-public (create-proposal (description (string-ascii 256)))
     (begin
+        (asserts! (<= (len description) 256) ERR_INVALID_INPUT)
         (var-set proposal-counter (+ (var-get proposal-counter) u1))
         (let ((new-proposal-id (var-get proposal-counter)))
             (map-set proposals {proposal-id: new-proposal-id}
                      {proposer: tx-sender, description: description, votes-for: u0, votes-against: u0, executed: false})
             (print {action: "proposal-created", proposal-id: new-proposal-id, proposer: tx-sender, description: description})
             (ok new-proposal-id)
-        )
-    )
-)
-
-(define-public (vote (proposal-id uint) (support bool) (vote-weight uint))
-    (begin
-        (asserts! (> vote-weight 0) ERR_INVALID_AMOUNT)
-        (let ((proposal (map-get? proposals {proposal-id: proposal-id})))
-            (asserts! (is-some proposal) ERR_PROPOSAL_NOT_FOUND)
-            (if support
-                (map-set proposals {proposal-id: proposal-id}
-                         {proposer: (get proposer proposal), 
-                          description: (get description proposal), 
-                          votes-for: (+ (get votes-for proposal) vote-weight), 
-                          votes-against: (get votes-against proposal), 
-                          executed: (get executed proposal)})
-                (map-set proposals {proposal-id: proposal-id}
-                         {proposer: (get proposer proposal), 
-                          description: (get description proposal), 
-                          votes-for: (get votes-for proposal), 
-                          votes-against: (+ (get votes-against proposal) vote-weight), 
-                          executed: (get executed proposal)})
-            )
-            (print {action: "vote-recorded", proposal-id: proposal-id, voter: tx-sender, support: support, vote-weight: vote-weight})
-            (ok true)
-        )
-    )
-)
-
-(define-public (execute-proposal (proposal-id uint))
-    (begin
-        (let ((proposal (map-get? proposals {proposal-id: proposal-id})))
-            (asserts! (is-some proposal) ERR_PROPOSAL_NOT_FOUND)
-            (if (and (not (get executed proposal)) 
-                     (> (get votes-for proposal) (get votes-against proposal))
-                     (>= (+ (get votes-for proposal) (get votes-against proposal)) quorum-requirement))
-                (begin
-                    (map-set proposals {proposal-id: proposal-id}
-                             {proposer: (get proposer proposal), 
-                              description: (get description proposal), 
-                              votes-for: (get votes-for proposal), 
-                              votes-against: (get votes-against proposal), 
-                              executed: true})
-                    (print {action: "proposal-executed", proposal-id: proposal-id})
-                    (ok "Proposal executed successfully")
-                )
-                (err ERR_CANNOT_EXECUTE_PROPOSAL)
-            )
         )
     )
 )
@@ -191,8 +124,8 @@
 (define-private (only-owner (content-id uint))
     (match (map-get? user-content {content-id: content-id})
         content (if (is-eq tx-sender (get owner content))
-                    (ok true)
-                    (err ERR_UNAUTHORIZED))
-        (err ERR_CONTENT_NOT_FOUND)
+                    (ok true) ;; Successfully verify the owner
+                    (err ERR_UNAUTHORIZED)) ;; Unauthorized access error
+        (err ERR_CONTENT_NOT_FOUND) ;; Content not found error
     )
 )
