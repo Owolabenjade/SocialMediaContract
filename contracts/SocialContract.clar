@@ -48,7 +48,8 @@
                         (print {action: "profile-updated", user: tx-sender, username: username, bio: bio})
                         (ok ()))
                     (ok ()))
-                (err ERR_PROFILE_NOT_FOUND))))))
+                (err ERR_PROFILE_NOT_FOUND)))))
+)
 
 ;; ========== Content Management ========== ;;
 (define-map user-content {content-id: uint} {owner: principal, content-url: (string-ascii 256)})
