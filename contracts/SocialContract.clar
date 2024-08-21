@@ -21,10 +21,14 @@
 ;; Logging admin changes using print
 (define-public (set-admin (new-admin principal))
     (begin
-        (asserts! (is-eq tx-sender (var-get admin)) ERR_UNAUTHORIZED)
-        (var-set admin new-admin)
-        (print {action: "admin-changed", new-admin: new-admin})
-        (ok new-admin)
+        (if (is-eq tx-sender (var-get admin))
+            (begin
+                (var-set admin new-admin)
+                (print {action: "admin-changed", new-admin: new-admin})
+                (ok new-admin) ;; Corrected to ensure a response type is returned
+            )
+            (err ERR_UNAUTHORIZED) ;; Ensures a response type is returned
+        )
     )
 )
 
