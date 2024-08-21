@@ -189,5 +189,7 @@
 )
 
 (define-private (only-owner (content-id uint))
-    (asserts! (is-eq tx-sender (get (map-get? user-content {content-id: content-id}) owner)) ERR_UNAUTHORIZED)
+    (let ((content (unwrap! (map-get? user-content {content-id: content-id}) (err ERR_CONTENT_NOT_FOUND))))
+        (asserts! (is-eq tx-sender (get owner content)) ERR_UNAUTHORIZED)
+    )
 )
