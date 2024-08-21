@@ -49,7 +49,6 @@
                         (ok ()))
                     (ok ()))
                 (err ERR_PROFILE_NOT_FOUND)))))
-)
 
 ;; ========== Content Management ========== ;;
 (define-map user-content {content-id: uint} {owner: principal, content-url: (string-ascii 256)})
