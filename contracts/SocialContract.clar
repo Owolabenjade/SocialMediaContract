@@ -1,110 +1,130 @@
-;; ========== User Content Smart Contract ========== ;;
-;; This contract manages user-generated content on the blockchain.
-;; Each piece of content is associated with a unique content ID and an owner.
+;; ==============================
+;; Decentralized Social Media Platform Smart Contract
+;; ==============================
 
-(define-data-var user-content (map {content-id: uint} 
-                                  {owner: principal, 
-                                   content-url: (string-ascii 256), 
-                                   access-control: (list 100 principal)}))
+;; ========== Constants for Error Codes ========== ;;
+(define-constant ERR_UNAUTHORIZED u1004)
+(define-constant ERR_PROFILE_NOT_FOUND u1002)
+(define-constant ERR_CONTENT_NOT_FOUND u1003)
+(define-constant ERR_INSUFFICIENT_BALANCE u1001)
+(define-constant ERR_PROPOSAL_NOT_FOUND u1008)
+(define-constant ERR_CANNOT_EXECUTE_PROPOSAL u1009)
+(define-constant ERR_INVALID_AMOUNT u1010)
+(define-constant ERR_RATE_LIMITED u1011)
+(define-constant ERR_INVALID_INPUT u1012)
+
+;; ========== Platform Token Creation ========== ;;
+(define-fungible-token platform-token)
+
+;; Admin role for managing certain functions
+(define-data-var admin principal tx-sender)
+
+;; Logging admin changes using print
+(define-public (set-admin (new-admin principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get admin)) ERR_UNAUTHORIZED)
+        (var-set admin new-admin)
+        (print {action: "admin-changed", new-admin: new-admin})
+        (ok ())
+    )
+)
+
+;; ========== User Profile Management ========== ;;
+(define-constant MAX_USERNAME_LENGTH u20)
+(define-constant MAX_BIO_LENGTH u100)
+
+(define-map user-profiles {user: principal} {username: (string-ascii 20), bio: (string-ascii 100)})
+
+(define-public (set-profile (username (string-ascii 20)) (bio (string-ascii 100)))
+    (begin
+        (asserts! (<= (len username) MAX_USERNAME_LENGTH) ERR_INVALID_INPUT)
+        (asserts! (<= (len bio) MAX_BIO_LENGTH) ERR_INVALID_INPUT)
+        (let ((existing-profile (map-get? user-profiles {user: tx-sender})))
+            (if existing-profile
+                (if (or (not (is-eq (get username existing-profile) username))
+                        (not (is-eq (get bio existing-profile) bio)))
+                    (begin
+                        (map-set user-profiles {user: tx-sender} {username: username, bio: bio})
+                        (print {action: "profile-updated", user: tx-sender, username: username, bio: bio})
+                        (ok ()))
+                    (ok ()))
+                (err ERR_PROFILE_NOT_FOUND)))))
+)
+
+;; ========== Content Management ========== ;;
+(define-map user-content {content-id: uint} {owner: principal, content-url: (string-ascii 256)})
+
+(define-data-var content-counter uint u0)
+
+(define-public (create-content (content-url (string-ascii 256)))
+    (begin
+        (asserts! (<= (len content-url) 256) ERR_INVALID_INPUT)
+        (var-set content-counter (+ (var-get content-counter) u1))
+        (let ((new-content-id (var-get content-counter)))
+            (map-set user-content {content-id: new-content-id} {owner: tx-sender, content-url: content-url})
+            (print {action: "content-created", content-id: new-content-id, owner: tx-sender, content-url: content-url})
+            (ok new-content-id)
+        )
+    )
+)
+
+;; ========== Governance Contract ========== ;;
+(define-map proposals
+    {proposal-id: uint}
+    {proposer: principal, 
+     description: (string-ascii 256), 
+     votes-for: uint, 
+     votes-against: uint, 
+     executed: bool})
+
+(define-data-var proposal-counter uint u0)
+
+(define-constant quorum-requirement 100)
+
+(define-public (create-proposal (description (string-ascii 256)))
+    (begin
+        (asserts! (<= (len description) 256) ERR_INVALID_INPUT)
+        (var-set proposal-counter (+ (var-get proposal-counter) u1))
+        (let ((new-proposal-id (var-get proposal-counter)))
+            (map-set proposals {proposal-id: new-proposal-id}
+                     {proposer: tx-sender, description: description, votes-for: u0, votes-against: u0, executed: false})
+            (print {action: "proposal-created", proposal-id: new-proposal-id, proposer: tx-sender, description: description})
+            (ok new-proposal-id)
+        )
+    )
+)
+
+;; ========== Token-Based Tipping and Subscription Mechanisms ========== ;;
+(define-constant subscription-fee 100)
+
+(define-public (tip-user (recipient principal) (amount uint))
+    (begin
+        (asserts! (>= (ft-get-balance platform-token tx-sender) amount) ERR_INSUFFICIENT_BALANCE)
+        (ft-transfer? platform-token tx-sender recipient amount)
+        (print {action: "tipped", recipient: recipient, amount: amount})
+        (ok "Tip successful")
+    )
+)
+
+(define-public (subscribe (user principal))
+    (begin
+        (asserts! (>= (ft-get-balance platform-token tx-sender) subscription-fee) ERR_INSUFFICIENT_BALANCE)
+        (ft-transfer? platform-token tx-sender user subscription-fee)
+        (print {action: "subscribed", user: user, subscriber: tx-sender, subscription-fee: subscription-fee})
+        (ok "Subscription successful")
+    )
+)
 
 ;; ========== Helper Functions ========== ;;
-;; Checks if content with the given content ID exists
 (define-private (content-exists? (content-id uint))
     (is-some (map-get? user-content {content-id: content-id}))
 )
 
-;; Ensures that only the owner of the content can modify it
 (define-private (only-owner (content-id uint))
-    (begin
-        (match (map-get? user-content {content-id: content-id})
-            content
-            (if (is-eq (tuple-get owner content) tx-sender)
-                (ok true)
-                (err u1000) ;; Error code for "You are not the owner of this content."
-            )
-            (err u1001) ;; Error code for "Content not found."
-        )
-    )
-)
-
-;; ========== Public Functions ========== ;;
-;; Uploads new content to the blockchain
-(define-public (upload-content (content-id uint) 
-                               (content-url (string-ascii 256)) 
-                               (access-control (list 100 principal)))
-    (begin
-        (if (not (content-exists? content-id))
-            (begin
-                (map-insert user-content {content-id: content-id} 
-                            {owner: tx-sender, 
-                             content-url: content-url, 
-                             access-control: access-control})
-                (print "Content uploaded successfully")
-                (ok "Content uploaded successfully")
-            )
-            (err u1002) ;; Error code for "Content ID already exists."
-        )
-    )
-)
-
-;; Updates existing content owned by the user
-(define-public (update-content (content-id uint) 
-                               (content-url (string-ascii 256)) 
-                               (access-control (list 100 principal)))
-    (begin
-        (match (only-owner content-id)
-            success
-            (begin
-                (map-set user-content {content-id: content-id} 
-                         {owner: tx-sender, 
-                          content-url: content-url, 
-                          access-control: access-control})
-                (print "Content updated successfully")
-                (ok "Content updated successfully")
-            )
-            err err
-        )
-    )
-)
-
-;; Retrieves the content URL if the user has access
-(define-read-only (get-content (content-id uint))
-    (begin
-        (match (map-get? user-content {content-id: content-id})
-            content
-            (if (or (is-eq (tuple-get owner content) tx-sender) 
-                    (contains tx-sender (tuple-get access-control content)))
-                (ok (tuple-get content-url content))
-                (err u1003) ;; Error code for "You do not have access to this content."
-            )
-            (err u1001) ;; Error code for "Content not found."
-        )
-    )
-)
-
-;; Grants access to a new user for specific content
-(define-public (grant-access (content-id uint) (new-user principal))
-    (begin
-        (match (only-owner content-id)
-            success
-            (match (map-get? user-content {content-id: content-id})
-                content
-                (let ((current-access (tuple-get access-control content)))
-                    (if (< (len current-access) 100)
-                        (let ((updated-access-control (append current-access (list new-user))))
-                            (map-set user-content {content-id: content-id} 
-                                {owner: tx-sender, 
-                                 content-url: (tuple-get content-url content), 
-                                 access-control: updated-access-control})
-                            (print "Access granted successfully")
-                            (ok "Access granted successfully")
-                        )
-                        (err u1004) ;; Error code for "Access control list is full."
-                    )
-                )
-                (err u1001) ;; Error code for "Content not found."
-            )
-            err err
-        )
+    (match (map-get? user-content {content-id: content-id})
+        content (if (is-eq tx-sender (get owner content))
+                    (ok true) ;; Successfully verify the owner
+                    (err ERR_UNAUTHORIZED)) ;; Unauthorized access error
+        (err ERR_CONTENT_NOT_FOUND) ;; Content not found error
     )
 )
